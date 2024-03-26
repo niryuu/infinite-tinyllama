@@ -1,7 +1,6 @@
 import os
 import sys
 
-import wandb
 import yaml
 from datasets.arrow_dataset import Dataset
 from datasets.load import load_dataset
@@ -13,6 +12,8 @@ from transformers import (
     TrainingArguments,
 )
 from trl import SFTTrainer
+
+import wandb
 
 os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "true"
 
@@ -43,21 +44,21 @@ def simple_template_for_pretrain(input) -> str:
     return template
 
 
-def simple_template_for_train(input, output) -> str:
+def simple_template_for_train(input, output, eot) -> str:
     template = f"""\
     <|im_start|>user
     {input}
     <|im_end|>
     <|im_start|>assistant
     {output}
-    <|im_end|>
+    <|im_end|>{eot}
     """
     # Remove any leading whitespace characters from each line in the template.
     template = "\n".join([line.lstrip() for line in template.splitlines()])
     return template
 
 
-def hint_template_for_train(hint, question, answer):
+def hint_template_for_train(hint, question, answer, eot):
     template = f"""\
     <|im_start|>user
     {hint}
@@ -65,14 +66,14 @@ def hint_template_for_train(hint, question, answer):
     <|im_end|>
     <|im_start|>assistant
     {answer}
-    <|im_end|>
+    <|im_end|>{eot}
     """
     # Remove any leading whitespace characters from each line in the template.
     template = "\n".join([line.lstrip() for line in template.splitlines()])
     return template
 
 
-def context_template_for_train(context, question, answer):
+def context_template_for_train(context, question, answer, eot):
     template = f"""\
     <|im_start|>user
     {question}
@@ -80,7 +81,7 @@ def context_template_for_train(context, question, answer):
     <|im_end|>
     <|im_start|>assistant
     {answer}
-    <|im_end|>
+    <|im_end|>{eot}
     """
     # Remove any leading whitespace characters from each line in the template.
     template = "\n".join([line.lstrip() for line in template.splitlines()])
@@ -99,6 +100,7 @@ def context_hint_template_for_train(hint, context, question, answer):
     <|im_start|>assistant
     {answer}
     <|im_end|>
+    </s>
     """
     # Remove any leading whitespace characters from each line in the template.
     template = "\n".join([line.lstrip() for line in template.splitlines()])
@@ -117,6 +119,11 @@ def prepare_train_data(dataset_id):
 
     data_df = data.to_pandas()
 
+    if ("is_chat" in train_config) and train_config["is_chat"]:
+        eot = ""
+    else:
+        eot = "</s>"
+
     if "dataset_filter_field_name" in train_config:
         data_df = data_df[data_df[train_config["dataset_filter_field_name"]] == train_config["dataset_filter_field_value"]]
 
@@ -129,7 +136,7 @@ def prepare_train_data(dataset_id):
             context_field_name = train_config["dataset_context_field_name"]
             if "dataset_context_hint" not in train_config:
                 data_df["text"] = data_df[[context_field_name, input_field_name, output_field_name]].apply(
-                    lambda x: context_template_for_train(x[context_field_name], x[input_field_name], x[output_field_name]),
+                    lambda x: context_template_for_train(x[context_field_name], x[input_field_name], x[output_field_name], eot),
                     axis=1,
                 )
             else:
@@ -140,18 +147,19 @@ def prepare_train_data(dataset_id):
                         x[context_field_name],
                         x[input_field_name],
                         x[output_field_name],
+                        eot,
                     ),
                     axis=1,
                 )
         elif "dataset_input_hint" in train_config:
             input_hint = train_config["dataset_input_hint"]
             data_df["text"] = data_df[[input_field_name, output_field_name]].apply(
-                lambda x: hint_template_for_train(input_hint, x[input_field_name], x[output_field_name]),
+                lambda x: hint_template_for_train(input_hint, x[input_field_name], x[output_field_name], eot),
                 axis=1,
             )
         else:
             data_df["text"] = data_df[[input_field_name, output_field_name]].apply(
-                lambda x: simple_template_for_train(x[input_field_name], x[output_field_name]),
+                lambda x: simple_template_for_train(x[input_field_name], x[output_field_name], eot),
                 axis=1,
             )
 
@@ -277,8 +285,8 @@ trainer.train()
 #
 # Save the model
 #
-#merged_model = model.merge_and_unload()
-#merged_model.save_pretrained(merged_model_path)
-#tokenizer.save_pretrained(merged_model_path)
+# merged_model = model.merge_and_unload()
+# merged_model.save_pretrained(merged_model_path)
+# tokenizer.save_pretrained(merged_model_path)
 
 wandb.finish()
